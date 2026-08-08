@@ -265,9 +265,10 @@ export const NoteGetOutputSchema = {
         noteNumber: z.string(),
         title: z.string(),
       })).optional(),
+      downloadUrl: z.string().optional(),
     }))
     .optional()
-    .describe('Detailed correction instructions (only when includeCorrections=true). Lists affected ABAP objects and per-correction prerequisites.'),
+    .describe('Detailed correction instructions (only when includeCorrections=true). Lists affected ABAP objects and per-correction prerequisites. downloadUrl is present only for Transport-Based Correction Instructions (TCI) and points at the transport package.'),
 
   manualActions: z
     .string()
