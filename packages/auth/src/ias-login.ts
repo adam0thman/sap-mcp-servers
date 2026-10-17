@@ -243,7 +243,7 @@ async function tryFillFirstVisible(
   if (!visible) return false;
   await visible.dispose();
   for (const selector of selectors) {
-    const field = await page.$(selector);
+    const field = await page.$(`${selector}:visible`);
     if (field && await field.isVisible()) {
       beforeFill?.();
       await field.click({ clickCount: 3 });

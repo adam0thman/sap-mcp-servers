@@ -80,6 +80,7 @@ class FakeLoginPage {
   }
 
   async $(selector: string): Promise<FakeElement | null> {
+    selector = selector.replace(/:visible$/, '');
     if (this.stage === 'username' && selector === '#j_username') {
       return new FakeElement(this, 'username');
     }

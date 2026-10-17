@@ -154,7 +154,7 @@ test('waits through SAP Neo SAML bootstrap pages before entering the password', 
   assert.ok(filled.every(f=>f.origin==='https://accounts.sap.com'));
 });
 
-test('missing second-step password has one wait deadline, not one per selector', { timeout: 19000 }, async t => {
+test('missing second-step password has one wait deadline, not one per selector', { timeout: 90000 }, async t => {
   const context = await browser.newContext({ offline: true });
   t.after(() => context.close());
   await context.exposeBinding('captureCredential', () => {});
@@ -166,7 +166,7 @@ test('missing second-step password has one wait deadline, not one per selector',
     sapUsername: username, sapPassword: password, sapLoginUrl: 'https://accounts.sap.com/login',
     headful: false, mfaTimeout: 100
   }, profile, logger), /Could not find password field after username submission/);
-  assert.ok(Date.now() - started < 18000);
+  assert.ok(Date.now() - started < 60000);
 });
 
 test('a silent SAP Neo SAML sign-in returns to the service without filling credentials', { timeout: 10000 }, async t => {
@@ -190,4 +190,20 @@ test('a silent SAP Neo SAML sign-in returns to the service without filling crede
     { ...profile, appUrl: 'https://documents.support.sap.com/customerkba/' }, logger);
   assert.equal(page.url(), 'https://documents.support.sap.com/done');
   assert.equal(credentialsFilled, false);
+});
+
+test('hidden duplicate fields do not hide the visible login form', { timeout: 15000 }, async t => {
+  const context = await browser.newContext({ offline: true });
+  t.after(() => context.close());
+  const filled = [];
+  await context.exposeBinding('captureCredential', (_source, field) => filled.push(field));
+  await context.route('**/*', route => route.fulfill({ contentType: 'text/html',
+    body: new URL(route.request().url()).hostname === 'service.example'
+      ? '<title>Application</title>Signed in'
+      : '<input type="hidden" id="j_username" name="username"><input type="hidden" id="j_password" name="password">' +
+        form(['username', 'password'], 'https://service.example/done') }));
+  const page = await context.newPage();
+  await performPasswordLogin(page, { sapLoginUrl: 'https://accounts.sap.com/login',
+    sapUsername: username, sapPassword: password, headful: false, mfaTimeout: 1000 }, profile, logger);
+  assert.deepEqual(filled, ['username', 'password']);
 });

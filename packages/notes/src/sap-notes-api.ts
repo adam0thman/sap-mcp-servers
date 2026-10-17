@@ -261,7 +261,8 @@ export class SapNotesApiClient {
           .finally(() => { this.documentLogin = undefined; });
         await this.documentLogin;
       }
-    } catch {
+    } catch (error) {
+      logger.warn('SAP document sign-in failed', error);
       throw new Error('Could not sign in to SAP document attachments. Check the configured SAP credentials; ' +
         'use HEADFUL=true to complete MFA or an interactive sign-in. No further login was attempted.');
     }
