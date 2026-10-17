@@ -3,7 +3,7 @@ import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { basename, dirname, join, isAbsolute, resolve } from 'path';
 import { homedir, tmpdir } from 'os';
-import { existsSync, realpathSync } from 'fs';
+import { existsSync, realpathSync, statSync } from 'fs';
 import { mkdtemp, open, rm } from 'fs/promises';
 import { createHash } from 'crypto';
 import { z } from 'zod';
@@ -380,8 +380,8 @@ class SapNoteMcpServer {
         try {
           validateAttachmentUrl(url);
           const requestedDir = outputDir?.trim() ? resolve(outputDir.trim()) : undefined;
-          if (requestedDir && !existsSync(requestedDir)) {
-            throw new Error(`Output directory does not exist: ${requestedDir}`);
+          if (requestedDir && !statSync(requestedDir, { throwIfNoEntry: false })?.isDirectory()) {
+            throw new Error(`Output directory does not exist or is not a directory: ${requestedDir}`);
           }
           const { body, contentType, bytes, suggestedFilename } = await this.withAuthRetry(token =>
             this.sapNotesClient.fetchAttachment(url, token)

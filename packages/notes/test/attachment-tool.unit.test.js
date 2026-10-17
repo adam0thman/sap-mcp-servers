@@ -95,17 +95,21 @@ test('filename precedence and confinement work with literal percent signs and le
 
 test('invalid URL or output directory is rejected before login or download', async t => {
   const { dir, call, server } = await fixture(t);
+  const regularFile = join(dir, 'existing.pdf');
+  await writeFile(regularFile, 'keep this');
   let calls = 0;
   server.withAuthRetry = async () => { calls++; throw new Error('must not authenticate'); };
-  for (const args of [{ url: 'https://example.com/file', outputDir: dir }, { outputDir: join(dir, 'missing') }]) {
+  for (const args of [{ url: 'https://example.com/file', outputDir: dir },
+    { outputDir: join(dir, 'missing') }, { outputDir: regularFile }]) {
     const result = await call(args);
     assert.equal(result.isError, true);
     assert.match(result.content[0].text, /Refusing attachment host|Output directory does not exist/);
   }
   assert.equal(calls, 0);
+  assert.equal(await readFile(regularFile, 'utf8'), 'keep this');
 });
 
-test('a failed write removes its own partial file and preserves existing files', async t => {
+test('a failed write removes its own partial file without deleting unrelated files', async t => {
   const { dir, call } = await fixture(t);
   const handle = await open(join(dir, 'keep.txt'), 'wx');
   await handle.writeFile('keep this');
@@ -130,5 +134,5 @@ test('the HTTP server does not expose the local file-writing tool', async t => {
   const [a, b] = InMemoryTransport.createLinkedPair();
   t.after(async () => { await client.close(); await mcp.close(); });
   await Promise.all([client.connect(a), mcp.connect(b)]);
-  assert.ok(!(await client.listTools()).tools.some(tool => tool.name === 'fetch_attachment'));
+  assert.deepEqual((await client.listTools()).tools.map(tool => tool.name).sort(), ['fetch', 'search']);
 });

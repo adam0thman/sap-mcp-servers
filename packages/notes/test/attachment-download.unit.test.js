@@ -108,11 +108,13 @@ test('enforces the size limit during chunked transfers', async t => {
 });
 
 test('requests identity encoding and rejects unexpected HTTP compression', async t => {
+  let encoding;
   await fixture(t, (req, res) => {
-    assert.equal(req.headers['accept-encoding'], 'identity');
+    encoding = req.headers['accept-encoding'];
     res.writeHead(200, { 'Content-Encoding': 'gzip' }); res.end('unexpected compressed data');
   });
   await assert.rejects(downloadAttachment(`${origin}/file`, {}), /Unsupported attachment encoding: gzip/);
+  assert.equal(encoding, 'identity');
 });
 
 test('rejects empty and truncated downloads', async t => {
