@@ -1,6 +1,7 @@
 import { config as loadDotenv } from 'dotenv';
 import { existsSync } from 'fs';
 import { dirname, isAbsolute, join, resolve } from 'path';
+import { homedir } from 'os';
 import { fileURLToPath } from 'url';
 import type { AuthMethod, ServerConfig } from './types.js';
 import { logger } from './logger.js';
@@ -55,7 +56,7 @@ export function loadConfig(): ServerConfig {
     logLevel: process.env.LOG_LEVEL || 'info',
     apiHubBaseUrl: process.env.API_HUB_BASE_URL || 'https://api.sap.com',
     tokenCacheFile: process.env.API_HUB_TOKEN_CACHE_FILE || process.env.TOKEN_CACHE_FILE || join(process.cwd(), 'api-hub-token-cache.json'),
-    ssoStorageStateFile: resolveOptionalPath(process.env.SAP_SSO_STORAGE_STATE || join(process.env.HOME || process.cwd(), '.sap-mcp', 'sso-storage-state.json')),
+    ssoStorageStateFile: resolveOptionalPath(process.env.SAP_SSO_STORAGE_STATE || join(process.env.HOME || homedir(), '.sap-mcp', 'sso-storage-state.json')),
     sapLoginUrl: process.env.SAP_LOGIN_URL || 'https://me.sap.com/home'
   };
 }
@@ -81,7 +82,7 @@ function resolveOptionalPath(value: string | undefined): string | undefined {
 
   let resolvedPath = value;
   if (resolvedPath.startsWith('~')) {
-    const home = process.env.HOME || process.env.USERPROFILE || '';
+    const home = process.env.HOME || homedir();
     resolvedPath = join(home, resolvedPath.slice(2));
   }
 

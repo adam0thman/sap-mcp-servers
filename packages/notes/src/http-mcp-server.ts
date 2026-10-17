@@ -1,6 +1,7 @@
 import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
 import { dirname, join, isAbsolute, resolve } from 'path';
+import { homedir } from 'os';
 import { existsSync } from 'fs';
 import express from 'express';
 import cors from 'cors';
@@ -12,11 +13,13 @@ import type { SapWebAuthenticator } from '@marianfoo/sap-mcp-auth';
 import { createNotesAuthenticator } from './auth.js';
 import { SapNotesApiClient } from './sap-notes-api.js';
 import { logger } from './logger.js';
+import { SERVER_VERSION } from './version.js';
+import { resolveHeadful } from './headful.js';
 import {
-  NoteSearchInputSchema,
-  NoteSearchOutputSchema,
-  NoteGetInputSchema,
-  NoteGetOutputSchema,
+  NoteSearchInputMcpSchema,
+  NoteSearchOutputMcpSchema,
+  NoteGetInputMcpSchema,
+  NoteGetOutputMcpSchema,
   SAP_NOTE_SEARCH_DESCRIPTION,
   SAP_NOTE_GET_DESCRIPTION
 } from './schemas/sap-notes.js';
@@ -31,7 +34,7 @@ function resolveOptionalPath(value: string | undefined): string | undefined {
 
   let resolvedPath = value;
   if (resolvedPath.startsWith('~')) {
-    const home = process.env.HOME || process.env.USERPROFILE || '';
+    const home = process.env.HOME || homedir();
     resolvedPath = join(home, resolvedPath.slice(2));
   }
 
@@ -92,7 +95,7 @@ class HttpSapNoteMcpServer {
     )!;
     const ssoStorageStateFile = resolveOptionalPath(
       process.env.SAP_SSO_STORAGE_STATE ||
-      join(process.env.HOME || process.cwd(), '.sap-mcp', 'sso-storage-state.json')
+      join(process.env.HOME || homedir(), '.sap-mcp', 'sso-storage-state.json')
     );
     const hasSsoStorageState = !!(ssoStorageStateFile && existsSync(ssoStorageStateFile));
 
@@ -107,13 +110,10 @@ class HttpSapNoteMcpServer {
       logger.warn('ACCESS_TOKEN not set - server will run WITHOUT endpoint authentication');
     }
 
-    const isDocker = process.env.DOCKER_ENV === 'true' ||
-                    process.env.NODE_ENV === 'production' ||
-                    !process.env.DISPLAY ||
-                    !process.stdin.isTTY ||
-                    process.env.CI === 'true';
-
-    const headful = !isDocker && process.env.HEADFUL === 'true';
+    const { headful, overridden } = resolveHeadful();
+    if (overridden) {
+      logger.warn(`HEADFUL=true is ignored here (${overridden}); the login browser runs headless`);
+    }
 
     logger.warn('Configuration loaded:', {
       authMethod,
@@ -215,7 +215,7 @@ class HttpSapNoteMcpServer {
       return await fn(cookieHeader);
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
-      if (msg.includes('SESSION_EXPIRED') || msg.includes('401') || msg.includes('Unauthorized') || msg.includes('session expired')) {
+      if (msg.includes('SESSION_EXPIRED') || /\b401\b/.test(msg) || msg.includes('Unauthorized') || msg.includes('session expired')) {
         logger.warn('Session expired, re-authenticating and retrying...');
         this.authenticator.invalidateAuth();
         const { cookieHeader: newCookie } = await this.authenticator.ensureSession();
@@ -232,7 +232,7 @@ class HttpSapNoteMcpServer {
   private createMcpServer(): McpServer {
     const mcp = new McpServer({
       name: 'sap-note-search-mcp',
-      version: '0.3.0'
+      version: SERVER_VERSION
     });
 
     // ─── search ──────────────────────────────────────────────────
@@ -241,8 +241,8 @@ class HttpSapNoteMcpServer {
       {
         title: 'Search SAP Notes',
         description: SAP_NOTE_SEARCH_DESCRIPTION,
-        inputSchema: NoteSearchInputSchema,
-        outputSchema: NoteSearchOutputSchema
+        inputSchema: NoteSearchInputMcpSchema,
+        outputSchema: NoteSearchOutputMcpSchema
       },
       async ({ q, lang = 'EN' }) => {
         logger.info(`🔎 [search] Starting search for query: "${q}"`);
@@ -301,8 +301,8 @@ class HttpSapNoteMcpServer {
       {
         title: 'Fetch SAP Note',
         description: SAP_NOTE_GET_DESCRIPTION,
-        inputSchema: NoteGetInputSchema,
-        outputSchema: NoteGetOutputSchema
+        inputSchema: NoteGetInputMcpSchema,
+        outputSchema: NoteGetOutputMcpSchema
       },
       async ({ id, lang = 'EN', includeCorrections = false }) => {
         logger.info(`📄 [fetch] Getting note ${id} (includeCorrections=${includeCorrections})`);
@@ -425,7 +425,7 @@ class HttpSapNoteMcpServer {
       res.json({
         status: 'healthy',
         server: 'sap-note-search-mcp',
-        version: '0.3.0',
+        version: SERVER_VERSION,
         protocol: 'streamable-http',
         tools: ['search', 'fetch']
       });

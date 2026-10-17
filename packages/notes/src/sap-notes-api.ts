@@ -33,6 +33,21 @@ function isSessionExpiredError(error: unknown): boolean {
   return (error instanceof Error ? error.message : String(error)).includes('SESSION_EXPIRED');
 }
 
+function isRateLimitError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  return /\bHTTP 429\b|request failed \(429\)/i.test(message);
+}
+
+function plainNoteContent(value: unknown): string | null {
+  if (!value || typeof value !== 'object') return null;
+  const data = value as Record<string, unknown>;
+  for (const key of ['Content', 'content', 'Text', 'text', 'LongText', 'Html']) {
+    const text = data[key];
+    if (typeof text === 'string' && text.trim()) return text;
+  }
+  return null;
+}
+
 export interface SapNoteResult {
   id: string;
   title: string;
@@ -486,7 +501,7 @@ export class SapNotesApiClient {
         return await this.searchViaBackend(query, token, maxResults);
       } catch (backendError) {
         const message = backendError instanceof Error ? backendError.message : String(backendError);
-        if (message.includes('SESSION_EXPIRED')) throw backendError;
+        if (isSessionExpiredError(backendError) || isRateLimitError(backendError)) throw backendError;
         logger.warn(`⚠️ SAP for Me backend search failed, falling back to Coveo: ${message}`);
       }
 
@@ -656,7 +671,7 @@ export class SapNotesApiClient {
         if (backendNote) return backendNote;
       } catch (backendError) {
         const message = backendError instanceof Error ? backendError.message : String(backendError);
-        if (message.includes('SESSION_EXPIRED')) throw backendError;
+        if (isSessionExpiredError(backendError) || isRateLimitError(backendError)) throw backendError;
         logger.warn(`⚠️ SAP for Me backend Detail failed, trying legacy fallbacks: ${message}`);
       }
 
@@ -670,7 +685,7 @@ export class SapNotesApiClient {
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        if (errorMessage.includes('SESSION_EXPIRED')) throw error;
+        if (isSessionExpiredError(error) || isRateLimitError(error)) throw error;
         logger.warn(`⚠️ Playwright approach failed: ${errorMessage}, trying HTTP fallbacks`);
       }
 
@@ -686,7 +701,7 @@ export class SapNotesApiClient {
         }
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        if (errorMessage.includes('SESSION_EXPIRED')) throw error;
+        if (isSessionExpiredError(error) || isRateLimitError(error)) throw error;
         logger.debug(`Raw notes HTTP API failed: ${errorMessage}, trying OData fallbacks`);
       }
 
@@ -707,7 +722,7 @@ export class SapNotesApiClient {
           }
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : String(error);
-          if (errorMessage.includes('SESSION_EXPIRED')) throw error;
+          if (isSessionExpiredError(error) || isRateLimitError(error)) throw error;
           logger.warn(`⚠️ Endpoint ${endpoint} failed: ${errorMessage}`);
         }
       }
@@ -717,6 +732,9 @@ export class SapNotesApiClient {
 
     } catch (error) {
       logger.error(`❌ Failed to get SAP Note ${noteId}:`, error);
+      if (isRateLimitError(error)) {
+        throw new Error(`HTTP 429: SAP Notes rate limited for ${noteId}; retry later`);
+      }
       const errorMessage = error instanceof Error ? error.message : String(error);
       throw new Error(`Failed to get SAP Note ${noteId}: ${errorMessage}`);
     }
@@ -1724,24 +1742,25 @@ export class SapNotesApiClient {
         return this.mapToSapNoteDetail(jsonData.d, noteId);
       }
     } catch (jsonError) {
-      // Try HTML parsing
-      logger.debug('Note response is not JSON, attempting HTML parsing');
+      logger.debug('Note response is not JSON');
     }
 
-    // Parse HTML for note details
-    return this.parseHtmlForNoteDetail(responseText, noteId);
+    // A generic HTML page cannot prove that note content was retrieved.
+    return null;
   }
 
 
   /**
    * Map OData result to our SapNoteDetail format
    */
-  private mapToSapNoteDetail(item: any, noteId: string): SapNoteDetail {
+  private mapToSapNoteDetail(item: any, noteId: string): SapNoteDetail | null {
+    const content = plainNoteContent(item);
+    if (!content) return null;
     return {
       id: item.SapNote || item.Id || item.id || noteId,
       title: item.Title || item.title || 'Unknown Title',
       summary: item.Summary || item.summary || item.Description || 'No summary available',
-      content: item.Content || item.content || item.Text || item.summary || 'Content not available',
+      content,
       language: item.Language || item.language || 'EN',
       releaseDate: item.ReleaseDate || item.releaseDate || item.CreationDate || 'Unknown',
       component: item.Component || item.component,
@@ -1751,25 +1770,6 @@ export class SapNotesApiClient {
     };
   }
 
-
-  /**
-   * Parse HTML response to extract note details
-   */
-  private parseHtmlForNoteDetail(html: string, noteId: string): SapNoteDetail | null {
-    // Extract title if available
-    const titleMatch = html.match(/<title>(.*?)<\/title>/i);
-    const title = titleMatch ? titleMatch[1].replace(/SAP\s*-?\s*/i, '').trim() : `SAP Note ${noteId}`;
-    
-    return {
-      id: noteId,
-      title,
-      summary: 'SAP Note details available at the provided URL',
-      content: 'Please visit the URL for complete note content',
-      language: 'EN',
-      releaseDate: 'Unknown',
-      url: `https://launchpad.support.sap.com/#/notes/${noteId}`
-    };
-  }
 
   /**
    * Make HTTP request to SAP Raw Notes API (me.sap.com)
@@ -1836,11 +1836,13 @@ export class SapNotesApiClient {
 
       // Check if we have a valid note response
       if (jsonData && (jsonData.SapNote || jsonData.id || jsonData.noteId)) {
+        const content = plainNoteContent(jsonData);
+        if (!content) return null;
         return {
           id: jsonData.SapNote || jsonData.id || jsonData.noteId || noteId,
           title: jsonData.Title || jsonData.title || jsonData.ShortText || `SAP Note ${noteId}`,
           summary: jsonData.Summary || jsonData.summary || jsonData.Abstract || jsonData.abstract || 'SAP Note details',
-          content: jsonData.Content || jsonData.content || jsonData.Text || jsonData.LongText || jsonData.Html || 'Note content available at URL',
+          content,
           language: jsonData.Language || jsonData.language || 'EN',
           releaseDate: jsonData.ReleaseDate || jsonData.releaseDate || jsonData.CreationDate || 'Unknown',
           component: jsonData.Component || jsonData.component,
@@ -2184,13 +2186,15 @@ export class SapNotesApiClient {
   }
 
   private async savePersistentStorageState(): Promise<void> {
-    if (!this.browserContext || !this.config.ssoStorageStateFile) return;
+    const context = this.browserContext;
+    if (!context || !this.config.ssoStorageStateFile) return;
 
     try {
       const { dirname } = await import('path');
       const { mkdirSync } = await import('fs');
+      if (this.browserContext !== context) return;
       mkdirSync(dirname(this.config.ssoStorageStateFile), { recursive: true });
-      await this.browserContext.storageState({ path: this.config.ssoStorageStateFile });
+      await context.storageState({ path: this.config.ssoStorageStateFile });
       logger.debug(`Saved updated SAP SSO browser state to ${this.config.ssoStorageStateFile}`);
     } catch (error) {
       logger.warn(`Failed to save SAP SSO browser state: ${error instanceof Error ? error.message : String(error)}`);
@@ -2318,11 +2322,15 @@ export class SapNotesApiClient {
 
   private async getNoteWithPlaywright(noteId: string, token: string): Promise<SapNoteDetail | null> {
     let page!: Page;
+    let callBrowser: Browser | null = null;
+    let sessionExpired = false;
 
     try {
       // Reuse persistent browser instead of launching a new one each call
       await this.ensurePersistentBrowser(token);
-      page = await this.browserContext!.newPage();
+      callBrowser = this.browser;
+      const callContext = this.browserContext;
+      page = await callContext.newPage();
 
       // Navigate to the raw notes endpoint
       const rawUrl = `https://me.sap.com/backend/raw/sapnotes/Detail?q=${noteId}&t=E&isVTEnabled=false`;
@@ -2404,11 +2412,13 @@ export class SapNotesApiClient {
              }
 
              // Fallback to generic JSON parsing for other structures
+             const genericContent = plainNoteContent(jsonData);
+             if (!genericContent) return null;
              return {
                id: jsonData.SapNote || jsonData.id || noteId,
                title: jsonData.Title || jsonData.title || jsonData.ShortText || `SAP Note ${noteId}`,
                summary: jsonData.Summary || jsonData.summary || jsonData.Abstract || jsonData.Description || 'Note content extracted via Playwright',
-               content: jsonData.Content || jsonData.content || jsonData.Text || jsonData.LongText || jsonData.Html || jsonData.Description || 'Raw note data retrieved successfully',
+               content: genericContent,
                language: jsonData.Language || 'EN',
                releaseDate: jsonData.ReleaseDate || jsonData.CreationDate || 'Unknown',
                component: jsonData.Component,
@@ -2465,11 +2475,13 @@ export class SapNotesApiClient {
              }
 
              // Fallback to generic JSON parsing
+             const genericContent = plainNoteContent(jsonData);
+             if (!genericContent) return null;
              return {
                id: jsonData.SapNote || jsonData.id || noteId,
                title: jsonData.Title || jsonData.title || jsonData.ShortText || `SAP Note ${noteId}`,
                summary: jsonData.Summary || jsonData.summary || jsonData.Abstract || 'Note extracted via Playwright',
-               content: jsonData.Content || jsonData.content || jsonData.Text || jsonData.LongText || jsonData.Html || 'Note content available',
+               content: genericContent,
                language: jsonData.Language || 'EN',
                releaseDate: jsonData.ReleaseDate || jsonData.CreationDate || 'Unknown',
                component: jsonData.Component,
@@ -2483,77 +2495,32 @@ export class SapNotesApiClient {
         logger.debug('No JSON found in HTML body either');
       }
 
-      // If no JSON, try to extract data from HTML
-      logger.debug(`📄 Parsing HTML content (${content.length} characters)`);
-      
-      // Look for note data in various places in the HTML
-      const noteData = await page.evaluate((noteId) => {
-        // Try to find note information in the page
-        const result = {
-          id: noteId,
-          title: '',
-          summary: '',
-          content: '',
-          found: false
-        };
-
-        // Look for title in various places
-        const titleElement = document.querySelector('h1, h2, .note-title, .title');
-        if (titleElement) {
-          result.title = titleElement.textContent?.trim() || '';
-          result.found = true;
-        }
-
-        // Look for content in various places
-        const contentElement = document.querySelector('.note-content, .content, .description, .text');
-        if (contentElement) {
-          result.content = contentElement.textContent?.trim() || '';
-          result.found = true;
-        }
-
-        // Look for summary
-        const summaryElement = document.querySelector('.summary, .abstract, .description');
-        if (summaryElement) {
-          result.summary = summaryElement.textContent?.trim() || '';
-          result.found = true;
-        }
-
-        // If we found any content, mark as successful
-        if (result.title || result.content || result.summary) {
-          result.found = true;
-        }
-
-        return result;
-      }, noteId);
-
-      if (noteData.found) {
-        logger.info(`📄 Extracted note data from HTML via Playwright`);
-        
-        return {
-          id: noteId,
-          title: noteData.title || `SAP Note ${noteId}`,
-          summary: noteData.summary || 'Extracted via Playwright',
-          content: noteData.content || 'Note content extracted via browser automation',
-          language: 'EN',
-          releaseDate: 'Unknown',
-          url: `https://launchpad.support.sap.com/#/notes/${noteId}`
-        };
-      }
-
-      // If we get here, we didn't find useful content
+      // The Detail endpoint answers JSON; an HTML page is not note content.
       logger.warn(`⚠️ Playwright loaded page but couldn't extract note content`);
       return null;
 
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : String(error);
       logger.error(`❌ Playwright note extraction failed: ${errorMessage}`);
+      sessionExpired = isSessionExpiredError(error);
+      if (sessionExpired) {
+        // Detach only this call's expired browser before awaiting close. Another
+        // request may already have created a replacement that must stay usable.
+        if (this.browser === callBrowser) {
+          this.browser = null;
+          this.browserContext = null;
+        }
+        await callBrowser?.close().catch(() => {});
+      }
       throw new Error(`Playwright extraction failed: ${errorMessage}`);
     } finally {
       // Only close the page, keep the persistent browser alive
       if (page) {
         await page.close().catch(() => {});
       }
-      await this.savePersistentStorageState();
+      // Save only this call's still-current, non-expired session. A sibling may
+      // have closed our browser and started a replacement while this call ran.
+      if (!sessionExpired && this.browser === callBrowser) await this.savePersistentStorageState();
     }
   }
 

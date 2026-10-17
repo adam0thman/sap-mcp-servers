@@ -87,6 +87,7 @@ async function withAuthRetry<T>(fn: (cookieHeader: string) => Promise<T>): Promi
 - **Shared SSO** — after login the Playwright storage state is written to `ssoStorageStateFile`; other SAP MCP servers seed their browser context from it, so a single SAP login is reused across services. With `sharedSsoTokenFastPath: true` a valid storage-state file is reused **without launching a browser**.
 - **`validateSession` gate** — when provided, it runs on both cached reuse and fresh login; a rejected session is evicted and re-minted once.
 - **Cookie scoping** — `cookieScope` decides which cookies form the header: `{ type: 'url', url }` (origin-scoped), `{ type: 'domain', includes, fallbackToAll? }`, or `{ type: 'all' }`.
+- **Credential-origin guard** — password login fills credentials only on SAP's public identity origin or the configured standard customer-IAS tenant, and refuses to forward the password when federation changes the origin.
 
 ## API
 
@@ -156,6 +157,21 @@ const config = loadAuthConfigFromEnv({
 
 When loading configuration from a `.env` file, quote any value containing `#`; dotenv otherwise treats `#` and everything after it as a comment. For example, use `SAP_PASSWORD="My#Pass"`. The same applies to `PFX_PASSPHRASE`.
 
+### Customer IAS and corporate identity providers
+
+Direct password login supports the standard SAP Cloud Identity Services tenant domains
+`*.accounts.ondemand.com`, `*.accounts.cloud.sap`, and `*.accounts.sapcloud.cn`. Set `SAP_LOGIN_URL`
+to the intended tenant's HTTPS URL; only that exact tenant origin and `https://accounts.sap.com`
+are allowed to receive credentials. Custom IAS domains require interactive login. The authenticator waits
+for the JavaScript redirect used by an unauthenticated tenant `/admin` entry page before detecting the
+credential form.
+
+If conditional authentication delegates the login to a corporate identity provider, the password flow
+fails closed before filling `SAP_PASSWORD` on the new origin. Corporate federation can require different
+credentials, MFA, passkeys, or organization-specific policies and must be completed through a separate
+interactive login flow. The authenticator never assumes that `SAP_PASSWORD` is valid for the delegated
+identity provider.
+
 ### Also exported
 
 `isOnAuthPage`, `isAuthUrl`, `selectCookies`, `serializeCookies`, `defaultLogger`, and the error classes `AuthenticationError`, `CertificateLoadError`, `AuthenticationTimeoutError`, `BrowserNotFoundError`. The `Logger` interface lets you inject your own logger (`{ warn, error, info, debug }`); a stderr `defaultLogger` is used otherwise.
@@ -163,6 +179,13 @@ When loading configuration from a `.env` file, quote any value containing `#`; d
 ## Security
 
 The `tokenCacheFile` and the SSO `storageStateFile` contain **live SAP session cookies**. Treat them as secrets: store them outside your repo (e.g. `~/.sap-mcp/`), never commit them, and add them to `.gitignore`. Credentials and passphrases are never written to these files, but the cookies they hold can be used to act as you on SAP services until they expire.
+
+## Tests
+
+Run `npm test -w @marianfoo/sap-mcp-auth` from the repository root for unit tests.
+For browser regressions, install Chromium with `npx playwright install chromium`, then run
+`npm run test:browser -w @marianfoo/sap-mcp-auth`. These tests use synthetic credentials and
+locally served forms to verify allowed origins, delegated login rejection, and the tenant admin redirect.
 
 ## License
 

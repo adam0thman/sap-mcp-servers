@@ -18,10 +18,14 @@ jobs:
   # which is the real type-check for all four packages. The servers' own
   # `test` scripts hit live SAP and are intentionally NOT run in CI.
   build:
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       matrix:
+        os: [ubuntu-latest]
         node-version: [22.12.0, 22.x]
+        include:
+          - os: windows-latest
+            node-version: 22.x
     steps:
       - uses: actions/checkout@v7
 
@@ -36,6 +40,15 @@ jobs:
 
       - name: Build (auth → servers)
         run: npm run build
+
+      - name: Test shared authentication without live SAP
+        run: npm test -w @marianfoo/sap-mcp-auth
+
+      - name: Test shared SSO configuration across packages
+        run: node --test test/shared-sso-paths.test.mjs
+
+      - name: Test SAP Notes without live SAP
+        run: node --test packages/notes/test/*.unit.test.js
 
       - name: Smoke test published MCP bins
         run: npm run smoke:bin
@@ -68,3 +81,30 @@ jobs:
 
       - name: Lint PR commit messages
         run: npx commitlint --from "${{ github.event.pull_request.base.sha }}" --to "${{ github.event.pull_request.head.sha }}" --verbose
+
+  notes-browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.x
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Test Notes browser sessions without live SAP
+        run: xvfb-run --auto-servernum node --test packages/notes/test/*.browser.mjs
+
+  auth-browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.12.0
+          cache: 'npm'
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - name: Verify credential boundaries with synthetic browser forms
+        run: npm run test:browser -w @marianfoo/sap-mcp-auth
