@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdtemp, open, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { SapNoteMcpServer } from '../dist/mcp-server.js';
+import { HttpSapNoteMcpServer } from '../dist/http-mcp-server.js';
 
 async function fixture(t) {
   const dir = await mkdtemp(join(tmpdir(), 'sap-attachment-tool-'));
@@ -73,4 +74,61 @@ test('the default output lives in its own temporary directory', async t => {
   t.after(() => rm(dirname(path) === tmpdir() ? path : dirname(path), { recursive: true, force: true }));
   assert.notEqual(dirname(path), tmpdir());
   assert.equal(basename(path), filename);
+});
+
+test('filename precedence and confinement work with literal percent signs and legacy escapes', async t => {
+  const { dir, call, server, body } = await fixture(t);
+  for (const [index, example] of [
+    { filename: '../caller.pdf', suggestedFilename: 'server.pdf', url: '50%.htm', expected: 'caller.pdf' },
+    { suggestedFilename: '..\\..\\server.pdf', url: '50%.htm', expected: 'server.pdf' },
+    { url: '50%.pdf', expected: '50%.pdf' },
+    { url: '%FC.pdf', expected: '%FC.pdf' }
+  ].entries()) {
+    server.sapNotesClient.fetchAttachment = async () => ({ body, bytes: body.length,
+      contentType: 'application/pdf', suggestedFilename: example.suggestedFilename });
+    const outputDir = await mkdtemp(join(dir, `case-${index}-`));
+    const result = await call({ url: `https://documents.support.sap.com/${example.url}`, filename: example.filename, outputDir });
+    assert.ok(!result.isError, result.content?.[0]?.text);
+    assert.equal(result.structuredContent.path, join(outputDir, example.expected));
+  }
+});
+
+test('invalid URL or output directory is rejected before login or download', async t => {
+  const { dir, call, server } = await fixture(t);
+  let calls = 0;
+  server.withAuthRetry = async () => { calls++; throw new Error('must not authenticate'); };
+  for (const args of [{ url: 'https://example.com/file', outputDir: dir }, { outputDir: join(dir, 'missing') }]) {
+    const result = await call(args);
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /Refusing attachment host|Output directory does not exist/);
+  }
+  assert.equal(calls, 0);
+});
+
+test('a failed write removes its own partial file and preserves existing files', async t => {
+  const { dir, call } = await fixture(t);
+  const handle = await open(join(dir, 'keep.txt'), 'wx');
+  await handle.writeFile('keep this');
+  const prototype = Object.getPrototypeOf(handle);
+  await handle.close();
+  const write = prototype.writeFile;
+  t.mock.method(prototype, 'writeFile', async function(body) {
+    await write.call(this, body.subarray(0, 4));
+    throw new Error('synthetic disk full');
+  });
+  const result = await call({ outputDir: dir });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /synthetic disk full/);
+  await assert.rejects(readFile(join(dir, 'note.pdf')), { code: 'ENOENT' });
+  assert.equal(await readFile(join(dir, 'keep.txt'), 'utf8'), 'keep this');
+});
+
+test('the HTTP server does not expose the local file-writing tool', async t => {
+  const server = new HttpSapNoteMcpServer();
+  const mcp = server.createMcpServer();
+  const client = new Client({ name: 'attachment-http-tools-test', version: '1' });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  t.after(async () => { await client.close(); await mcp.close(); });
+  await Promise.all([client.connect(a), mcp.connect(b)]);
+  assert.ok(!(await client.listTools()).tools.some(tool => tool.name === 'fetch_attachment'));
 });

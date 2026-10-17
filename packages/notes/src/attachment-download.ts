@@ -1,7 +1,5 @@
 import https from 'node:https';
 import type { IncomingMessage } from 'node:http';
-import type { Readable } from 'node:stream';
-import { createBrotliDecompress, createUnzip } from 'node:zlib';
 import { Cookie, CookieJar } from 'tough-cookie';
 import type { Cookie as BrowserCookie } from 'playwright';
 import { isAuthUrl } from '@marianfoo/sap-mcp-auth';
@@ -65,17 +63,16 @@ export async function downloadAttachment(
   const signal = AbortSignal.timeout(timeoutMs);
 
   for (let redirects = 0; ; redirects++) {
-    const cookie = await jar.getCookieString(url.toString());
+    const cookieHeader = await jar.getCookieString(url.toString());
     const response = await new Promise<IncomingMessage>((resolve, reject) => {
       const req = https.request(url, {
         method: 'GET', signal, agent: false,
         pfx: auth.pfx, passphrase: auth.passphrase,
-        headers: { Accept: '*/*', 'Accept-Encoding': 'identity', ...(cookie ? { Cookie: cookie } : {}) }
+        headers: { Accept: '*/*', 'Accept-Encoding': 'identity', ...(cookieHeader ? { Cookie: cookieHeader } : {}) }
       }, resolve);
       req.once('error', reject);
       req.end();
     });
-    let stream: Readable = response;
     try {
       for (const cookie of response.headers['set-cookie'] ?? []) {
         await jar.setCookie(cookie, url.toString(), { ignoreError: true });
@@ -97,20 +94,13 @@ export async function downloadAttachment(
       }
 
       const encoding = (response.headers['content-encoding'] ?? 'identity').trim().toLowerCase();
-      if (encoding !== 'identity') {
-        const decoder = encoding === 'br' ? createBrotliDecompress()
-          : encoding === 'gzip' || encoding === 'deflate' ? createUnzip() : undefined;
-        if (!decoder) throw new Error(`Unsupported attachment encoding: ${encoding}`);
-        response.on('error', error => decoder.destroy(error));
-        stream = response.pipe(decoder);
-      }
+      if (encoding && encoding !== 'identity') throw new Error(`Unsupported attachment encoding: ${encoding}; requested identity`);
       const chunks: Buffer[] = [];
       let bytes = 0;
-      for await (const chunk of stream) {
-        const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        bytes += buffer.length;
+      for await (const chunk of response) {
+        bytes += chunk.length;
         if (bytes > maxBytes) throw new Error(`Attachment exceeds the ${maxBytes}-byte limit`);
-        chunks.push(buffer);
+        chunks.push(chunk);
       }
       if (!bytes) throw new Error('SAP returned an empty attachment');
       const body = Buffer.concat(chunks, bytes);
@@ -122,7 +112,6 @@ export async function downloadAttachment(
       if (contentType.toLowerCase().includes('text/html')) throw new Error('SAP returned HTML instead of an attachment');
       return { body, contentType, bytes, suggestedFilename: filenameFromDisposition(response.headers['content-disposition']) };
     } finally {
-      stream.destroy();
       response.destroy();
     }
   }

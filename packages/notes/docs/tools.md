@@ -199,18 +199,18 @@ of SAP hosts. TLS certificates are verified. The tool is available over **stdio 
 path belongs to the machine running the MCP server.
 
 Existing files and symlinks are never overwritten. Concurrent downloads to the same filename allow
-only one writer. Downloads stop after 60 seconds, five redirects, or 100 MiB of file data (including
-after HTTP decompression). The size is checked while reading, including chunked responses.
+only one writer. Downloads stop after 60 seconds, five redirects, or 100 MiB of file data.
+The size is checked while reading, including chunked responses. The client requests identity HTTP
+encoding and rejects unexpected compression. Archive files such as ZIP are saved unchanged.
 
-**Authentication differs from the JSON backend.** The me.sap.com storage state alone is
-not sufficient for the document hosts. Where `PFX_PATH` is configured the client
-certificate is presented for those origins, which is what authenticates them; session
-cookies are still supplied so cookie-authenticated hosts keep working.
+**Authentication can differ from the JSON backend.** Document hosts may require SAP Passport
+even when Notes search works with shared cookies. Set `PFX_PATH` and `PFX_PASSPHRASE` when required;
+the certificate is presented to allowed hosts and cookies retain their domain/path/expiry rules.
 
 **An unauthenticated request answers `HTTP 200` with a ~1.8 KB HTML login stub**, not an
 error status. Saving that blindly would produce a file named `something.png` containing
-JavaScript. The tool checks the content type and rejects the stub, so a successful result
-means real bytes.
+JavaScript. The tool rejects login pages and all `text/html` responses, including actual HTML
+attachments; supported binary or text attachments must have a different content type.
 
 ### Example
 
@@ -223,7 +223,7 @@ fetch_attachment(url="https://userapps.support.sap.com/...", outputDir="/tmp")
       bytes: 878422, sha256: "6f64e07c7903..." }
 ```
 
-To verify your setup against real notes with attachments, run from `packages/notes`:
+After building from the repository root with `npm run build`, verify your setup from `packages/notes`:
 
 ```sh
 node scripts/test-attachments.mjs 2187425

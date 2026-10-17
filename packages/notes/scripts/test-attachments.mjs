@@ -20,7 +20,6 @@ const server = new SapNoteMcpServer();
 const client = new Client({ name: 'attachment-live-check', version: '1' });
 const [a, b] = InMemoryTransport.createLinkedPair();
 const dir = await mkdtemp(join(tmpdir(), 'sap-attachments-live-'));
-let passed = 0;
 try {
   await Promise.all([client.connect(a), server.mcpServer.connect(b)]);
   for (const id of ids) {
@@ -36,11 +35,10 @@ try {
     assert.ok(body.length > 0);
     assert.equal(body.length, output.bytes);
     assert.equal(createHash('sha256').update(body).digest('hex'), output.sha256);
-    passed++;
-    console.log(JSON.stringify({ note: id, bytes: body.length, contentType: output.contentType, sha256: output.sha256 }));
+    console.log(JSON.stringify({ note: id, host: new URL(attachment.url).hostname,
+      bytes: body.length, contentType: output.contentType, sha256: output.sha256 }));
   }
-  assert.equal(passed, ids.length);
-  console.log(`${passed} real attachment download(s) passed`);
+  console.log(`${ids.length} real attachment download(s) passed`);
 } finally {
   await client.close();
   await server.mcpServer.close();

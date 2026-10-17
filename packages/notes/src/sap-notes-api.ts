@@ -1,5 +1,5 @@
-import { readFile } from 'node:fs/promises';
-import { downloadAttachment, validateAttachmentUrl } from './attachment-download.js';
+import { readFile } from 'fs/promises';
+import { downloadAttachment } from './attachment-download.js';
 import type { ServerConfig } from './types.js';
 import { logger } from './logger.js';
 import { existsSync } from 'fs';
@@ -225,14 +225,8 @@ export class SapNotesApiClient {
     }
   }
 
-  /**
-   * Hosts permitted for attachment download. SAP serves Note attachments from
-   * its document hosts; anything else is rejected so that a caller cannot use
-   * this method as a generic fetcher against arbitrary URLs.
-   */
   /** Download an attachment with the current SAP cookies and optional SAP Passport. */
   async fetchAttachment(attachmentUrl: string, token: string) {
-    validateAttachmentUrl(attachmentUrl);
     const state = await this.loadBackendStorageState(token);
     const pfx = this.config.pfxPath ? await readFile(this.config.pfxPath) : undefined;
     return downloadAttachment(attachmentUrl, {

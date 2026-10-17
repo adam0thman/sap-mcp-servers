@@ -3,7 +3,6 @@ import test from 'node:test';
 import http from 'node:http';
 import https from 'node:https';
 import { once } from 'node:events';
-import { gzipSync } from 'node:zlib';
 import { downloadAttachment } from '../dist/attachment-download.js';
 
 const origin = 'https://documents.support.sap.com';
@@ -108,11 +107,12 @@ test('enforces the size limit during chunked transfers', async t => {
   await assert.rejects(downloadAttachment(`${origin}/file`, {}, { maxBytes: 32 }), /byte limit/);
 });
 
-test('limits decompressed bytes and decodes normal compressed files', async t => {
-  const body = Buffer.from('a'.repeat(1024));
-  await fixture(t, (_req, res) => { res.writeHead(200, { 'Content-Encoding': 'gzip' }); res.end(gzipSync(body)); });
-  await assert.rejects(downloadAttachment(`${origin}/file`, {}, { maxBytes: 32 }), /byte limit/);
-  assert.deepEqual((await downloadAttachment(`${origin}/file`, {})).body, body);
+test('requests identity encoding and rejects unexpected HTTP compression', async t => {
+  await fixture(t, (req, res) => {
+    assert.equal(req.headers['accept-encoding'], 'identity');
+    res.writeHead(200, { 'Content-Encoding': 'gzip' }); res.end('unexpected compressed data');
+  });
+  await assert.rejects(downloadAttachment(`${origin}/file`, {}), /Unsupported attachment encoding: gzip/);
 });
 
 test('rejects empty and truncated downloads', async t => {

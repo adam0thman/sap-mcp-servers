@@ -1,13 +1,11 @@
 #!/usr/bin/env node
 import { config } from 'dotenv';
 import { fileURLToPath } from 'url';
-import { dirname, join, isAbsolute, resolve } from 'path';
-import { homedir } from 'os';
+import { basename, dirname, join, isAbsolute, resolve } from 'path';
+import { homedir, tmpdir } from 'os';
 import { existsSync, realpathSync } from 'fs';
-import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { mkdtemp, open, rm } from 'fs/promises';
 import { createHash } from 'crypto';
-import { tmpdir } from 'os';
-import { basename } from 'path';
 import { z } from 'zod';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -15,6 +13,7 @@ import type { ServerConfig } from './types.js';
 import type { SapWebAuthenticator } from '@marianfoo/sap-mcp-auth';
 import { createNotesAuthenticator } from './auth.js';
 import { SapNotesApiClient } from './sap-notes-api.js';
+import { validateAttachmentUrl } from './attachment-download.js';
 import { logger } from './logger.js';
 import { SERVER_VERSION } from './version.js';
 import { resolveHeadful } from './headful.js';
@@ -379,6 +378,11 @@ class SapNoteMcpServer {
         logger.info('Downloading SAP Note attachment');
 
         try {
+          validateAttachmentUrl(url);
+          const requestedDir = outputDir?.trim() ? resolve(outputDir.trim()) : undefined;
+          if (requestedDir && !existsSync(requestedDir)) {
+            throw new Error(`Output directory does not exist: ${requestedDir}`);
+          }
           const { body, contentType, bytes, suggestedFilename } = await this.withAuthRetry(token =>
             this.sapNotesClient.fetchAttachment(url, token)
           );
@@ -386,22 +390,29 @@ class SapNoteMcpServer {
           // Name precedence: caller > server Content-Disposition > URL path.
           // The URL path is frequently a generic endpoint name (for example
           // "attachment.htm"), so preferring it would save a PDF as .htm.
-          const fromUrl = decodeURIComponent(new URL(url).pathname.split('/').pop() || 'attachment');
+          let fromUrl = new URL(url).pathname.split('/').pop() || 'attachment';
+          try { fromUrl = decodeURIComponent(fromUrl); } catch { /* Keep literal or legacy percent escapes. */ }
           const chosen = filename?.trim() || suggestedFilename?.trim() || fromUrl;
           // Never let a supplied name escape the target directory.
           const safeName = basename(chosen.replace(/\\/g, '/')).replace(/[<>:"|?*\x00-\x1f]/g, '_');
           if (!safeName || safeName === '.' || safeName === '..') throw new Error('Invalid attachment filename');
 
-          const privateTemp = !outputDir?.trim();
-          const dir = privateTemp ? await mkdtemp(join(tmpdir(), 'sap-note-attachment-')) : resolve(outputDir!.trim());
-          if (!existsSync(dir)) {
-            throw new Error(`Output directory does not exist: ${dir}`);
-          }
+          const privateTemp = !requestedDir;
+          const dir = requestedDir ?? await mkdtemp(join(tmpdir(), 'sap-note-attachment-'));
 
           const target = join(dir, safeName);
           try {
             // Exclusive creation prevents overwrites, including existing symlinks.
-            await writeFile(target, body, { flag: 'wx', mode: 0o600 });
+            const file = await open(target, 'wx', 0o600);
+            try {
+              await file.writeFile(body);
+              await file.close();
+            } catch (error) {
+              await file.close().catch(() => {});
+              // Only this call's successfully opened file may be removed.
+              await rm(target, { force: true });
+              throw error;
+            }
           } catch (error) {
             if (privateTemp) await rm(dir, { recursive: true, force: true });
             throw error;
