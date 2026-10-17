@@ -264,8 +264,8 @@ login. It then retries the bounded HTTPS download once. Only verified Documents 
 into the shared SSO file; Notes cookies and origin storage are preserved.
 
 No new setting is needed for password users. Use `HEADFUL=true` for MFA/manual sign-in. Concurrent
-requests share a login attempt. HTTP 403, rate limits and server errors do not prompt another login.
+requests share a login attempt. On Documents, HTTP 403, rate limits and server errors do not prompt another login.
 If SAP rejects the completed sign-in, check the credentials or use interactive login, then restart
-the server before trying again. Further automatic password attempts are stopped for that process.
+the server before trying again. Further automatic password attempts are stopped for that stdio server process.
 The browser closes after the attempt; temporary authentication files are removed. A failed sign-in
 returns an error instead of repeating the ordinary Notes login.

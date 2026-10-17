@@ -250,7 +250,7 @@ export class SapNotesApiClient {
     }
 
     if (this.documentLoginRejected) {
-      throw new Error('The previous SAP document sign-in was rejected. Check SAP_USERNAME/SAP_PASSWORD or ' +
+      throw new Error('The previous SAP document sign-in was rejected. Check SAP_USERNAME/SAP_PASSWORD or certificate settings, or ' +
         'use HEADFUL=true for interactive sign-in, then restart the server before trying again.');
     }
     try {
@@ -275,7 +275,7 @@ export class SapNotesApiClient {
       if (error instanceof AttachmentLoginRequiredError) {
         this.documentLoginRejected = true;
         throw new Error('SAP still requires document sign-in after one login attempt. ' +
-          'Check SAP_USERNAME/SAP_PASSWORD and document access; use HEADFUL=true for interactive sign-in, ' +
+          'Check the configured SAP credentials or certificate and document access; use HEADFUL=true for interactive sign-in, ' +
           'then restart the server before trying again.');
       }
       throw error; // Preserve access denials, outages and download errors.

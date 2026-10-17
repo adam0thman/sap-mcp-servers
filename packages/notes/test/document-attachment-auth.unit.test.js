@@ -144,7 +144,7 @@ test('a removed SSO file is recreated with only the verified Documents cookies',
   assert.deepEqual(JSON.parse(await readFile(f.config.ssoStorageStateFile, 'utf8')), { cookies: [documentsCookie], origins: [] });
 });
 
-test('a read-only SSO file stays unchanged', { skip: process.platform === 'win32' }, async t => {
+test('a read-only SSO file stays unchanged', { skip: process.platform === 'win32' || process.getuid?.() === 0 }, async t => {
   const f = await fixture(t, loginOrFile);
   await chmod(f.config.ssoStorageStateFile, 0o400);
   t.after(() => chmod(f.config.ssoStorageStateFile, 0o600).catch(() => {}));
