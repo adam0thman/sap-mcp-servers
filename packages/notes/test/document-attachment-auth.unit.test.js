@@ -3,7 +3,7 @@ import test from 'node:test';
 import http from 'node:http';
 import https from 'node:https';
 import { once } from 'node:events';
-import { mkdtemp, readFile, writeFile, rm, stat, access } from 'node:fs/promises';
+import { mkdtemp, readFile, writeFile, rm, stat, access, chmod } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { SapWebAuthenticator } from '@marianfoo/sap-mcp-auth';
@@ -99,6 +99,8 @@ test('an unsuccessful login ends after one attempt and does not save unverified 
   await assert.rejects(f.client.fetchAttachment(url, 'unused'), /still requires document sign-in after one login attempt/);
   assert.equal(f.logins(), 1); assert.equal(f.requests.length, 2);
   assert.deepEqual(JSON.parse(await readFile(f.config.ssoStorageStateFile, 'utf8')), initial);
+  await assert.rejects(f.client.fetchAttachment(url, 'unused'), /restart the server/);
+  assert.equal(f.logins(), 1, 'a rejected sign-in must not submit the password again');
 });
 
 test('browser cancellation/timeout cleans temporary state and preserves Notes', async t => {
@@ -114,13 +116,13 @@ test('cookie persistence keeps changes made by another service during sign-in', 
   const f = await fixture(t, loginOrFile);
   const other = cookie('roadmap-session', 'roadmaps.sap.com');
   await writeFile(f.config.ssoStorageStateFile, JSON.stringify({ ...initial, cookies: [notesCookie, other] }));
-  await saveDocumentCookies(f.config.ssoStorageStateFile, [documentsCookie], initial);
+  await saveDocumentCookies(f.config.ssoStorageStateFile, [documentsCookie]);
   assert.deepEqual(JSON.parse(await readFile(f.config.ssoStorageStateFile, 'utf8')).cookies, [notesCookie, other, documentsCookie]);
 });
 
 test('a corrupt SSO file is not overwritten by persistence', async t => {
   const f = await fixture(t, loginOrFile); await writeFile(f.config.ssoStorageStateFile, 'not json');
-  await saveDocumentCookies(f.config.ssoStorageStateFile, [documentsCookie], initial);
+  await saveDocumentCookies(f.config.ssoStorageStateFile, [documentsCookie]);
   assert.equal(await readFile(f.config.ssoStorageStateFile, 'utf8'), 'not json');
 });
 
@@ -131,5 +133,21 @@ test('a document denied after successful sign-in retains its real access error',
   });
   await assert.rejects(f.client.fetchAttachment(url, 'unused'), /access denied \(HTTP 403\)/);
   assert.equal(f.logins(), 1); assert.equal(f.requests.length, 2);
+  assert.deepEqual(JSON.parse(await readFile(f.config.ssoStorageStateFile, 'utf8')), initial);
+});
+
+
+test('a removed SSO file is recreated with only the verified Documents cookies', async t => {
+  const f = await fixture(t, loginOrFile);
+  await rm(f.config.ssoStorageStateFile);
+  await saveDocumentCookies(f.config.ssoStorageStateFile, [documentsCookie]);
+  assert.deepEqual(JSON.parse(await readFile(f.config.ssoStorageStateFile, 'utf8')), { cookies: [documentsCookie], origins: [] });
+});
+
+test('a read-only SSO file stays unchanged', { skip: process.platform === 'win32' }, async t => {
+  const f = await fixture(t, loginOrFile);
+  await chmod(f.config.ssoStorageStateFile, 0o400);
+  t.after(() => chmod(f.config.ssoStorageStateFile, 0o600).catch(() => {}));
+  await saveDocumentCookies(f.config.ssoStorageStateFile, [documentsCookie]);
   assert.deepEqual(JSON.parse(await readFile(f.config.ssoStorageStateFile, 'utf8')), initial);
 });

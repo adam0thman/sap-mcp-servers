@@ -144,3 +144,9 @@ test('recognizes the documented SAP Neo login header even without familiar HTML 
   await fixture(t, (_req, res) => { res.writeHead(200, { 'Content-Type': 'text/html', 'com.sap.cloud.security.login': 'login-request' }); res.end('<form>Please sign in</form>'); });
   await assert.rejects(downloadAttachment(`${origin}/file`, {}), /sign-in required/);
 });
+
+
+test('other attachment hosts keep the existing Notes refresh signal for HTTP 403', async t => {
+  await fixture(t, (_req, res) => { res.writeHead(403); res.end(); });
+  await assert.rejects(downloadAttachment('https://userapps.support.sap.com/file', {}), /SESSION_EXPIRED/);
+});

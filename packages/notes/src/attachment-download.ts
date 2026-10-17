@@ -12,14 +12,13 @@ const ATTACHMENT_HOSTS = new Set([
 const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
 
-/** Login is recoverable; HTTP 403 and download failures are not login signals. */
+/** An explicit login challenge, distinct from download failures. */
 export class AttachmentLoginRequiredError extends Error {
   constructor(readonly url: string) {
     super(`Attachment sign-in required for ${new URL(url).hostname}`);
     this.name = 'AttachmentLoginRequiredError';
   }
 }
-
 
 export function validateAttachmentUrl(value: string): URL {
   const url = new URL(value);
@@ -97,7 +96,11 @@ export async function downloadAttachment(
         continue;
       }
       if (status === 401) throw new AttachmentLoginRequiredError(url.toString());
-      if (status === 403) throw new Error('Attachment access denied (HTTP 403). Check access to this document with your SAP user.');
+      if (status === 403) {
+        // Preserve the existing Notes refresh behavior on the other hosts.
+        if (url.hostname !== 'documents.support.sap.com') throw new Error('SESSION_EXPIRED: Attachment request failed (HTTP 403)');
+        throw new Error('Attachment access denied (HTTP 403). Check access to this document with your SAP user.');
+      }
       if (status !== 200) throw new Error(`Attachment request failed (HTTP ${status})`);
       if (Number(response.headers['content-length']) > maxBytes) {
         throw new Error(`Attachment exceeds the ${maxBytes}-byte limit`);

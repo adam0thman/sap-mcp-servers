@@ -32,7 +32,8 @@ all supported password selectors; the previous sequential waits multiplied a mis
 3. Reuse its password/certificate/MFA handling and credential-origin checks. Close the browser and
    remove temporary state after the attempt. Concurrent attachment calls share one login attempt.
 4. Retry the bounded Node HTTPS download once. A denial, timeout or failed login ends the call.
-   Do not reset the working Notes session or add another generic Notes-login retry.
+   If SAP rejects the completed document login, stop automatic password attempts until the server is restarted.
+   Explain how to check credentials or complete interactive sign-in. Preserve the working Notes session.
 5. Keep only Documents cookies from this login. On a successful download, merge those cookies into
    the existing shared SSO file while preserving Notes cookies and origin storage. Keep an in-memory
    copy if persistence fails. No new user settings or permanent browser are needed.

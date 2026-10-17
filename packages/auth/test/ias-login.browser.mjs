@@ -168,3 +168,26 @@ test('missing second-step password has one wait deadline, not one per selector',
   }, profile, logger), /Could not find password field after username submission/);
   assert.ok(Date.now() - started < 18000);
 });
+
+test('a silent SAP Neo SAML sign-in returns to the service without filling credentials', { timeout: 10000 }, async t => {
+  const context = await browser.newContext({ offline: true });
+  t.after(() => context.close());
+  let credentialsFilled = false;
+  await context.exposeBinding('captureCredential', () => { credentialsFilled = true; });
+  await context.route('**/*', async route => {
+    const url = new URL(route.request().url());
+    if (url.hostname === 'documents.support.sap.com' && url.pathname === '/done') {
+      return route.fulfill({ contentType: 'text/html', body: '<title>Documents</title>Signed in' });
+    }
+    if (url.hostname === 'documents.support.sap.com') {
+      return route.fulfill({ contentType: 'text/html', headers: { 'com.sap.cloud.security.login': 'login-request' },
+        body: '<script>setTimeout(()=>location.href="https://accounts.sap.com/saml2/idp/sso",50)</script>' });
+    }
+    return route.fulfill({ contentType: 'text/html', body: '<title>Sign In</title><form method="post" action="https://documents.support.sap.com/done"><input type="hidden" name="SAMLResponse" value="synthetic"></form><script>setTimeout(()=>document.forms[0].submit(),100)</script>' });
+  });
+  const page = await context.newPage();
+  await performPasswordLogin(page, { sapUsername: username, sapPassword: password, headful: false, mfaTimeout: 1000 },
+    { ...profile, appUrl: 'https://documents.support.sap.com/customerkba/' }, logger);
+  assert.equal(page.url(), 'https://documents.support.sap.com/done');
+  assert.equal(credentialsFilled, false);
+});

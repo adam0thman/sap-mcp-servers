@@ -248,7 +248,8 @@ The result contains the saved path, filename, content type, byte count and SHA-2
 limited to 100 MiB, 60 seconds per download attempt and five checked redirects. If SAP Documents
 requires a separate sign-in, the tool uses your configured SAP credentials once, then retries the
 download. Later calls reuse the document cookies, including after restart. The working Notes session
-is preserved. Set `HEADFUL=true` if your account requires interactive sign-in or MFA. See [the tool reference](docs/tools.md#fetch_attachment) for details.
+is preserved. If SAP rejects the sign-in, correct the credentials or use interactive login and restart
+the server before retrying. Set `HEADFUL=true` if your account requires interactive sign-in or MFA. See [the tool reference](docs/tools.md#fetch_attachment) for details.
 
 ---
 

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { access } from 'node:fs/promises';
+import { access, readFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { chromium } from 'playwright';
 import { SapWebAuthenticator } from '@marianfoo/sap-mcp-auth';
@@ -13,6 +13,7 @@ const config = { authMethod: 'password', sapUsername: user, sapPassword: passwor
 async function browserFixture(t, { interactive = false, cancel = false } = {}) {
   let browser, temporary, requestedHeadless;
   const posted = [];
+  let cancellationReached = false;
   const original = SapWebAuthenticator.prototype.ensureSession;
   t.mock.method(SapWebAuthenticator.prototype, 'ensureSession', function () {
     temporary = dirname(this.config.tokenCacheFile); return original.call(this);
@@ -22,7 +23,9 @@ async function browserFixture(t, { interactive = false, cancel = false } = {}) {
     browser = await chromium.launch({ headless: true });
     const create = browser.newContext.bind(browser);
     browser.newContext = async options => {
-      assert.deepEqual(JSON.parse(await (await import('node:fs/promises')).readFile(options.storageState, 'utf8')), { cookies: [], origins: [] });
+      const state = typeof options.storageState === 'string'
+        ? JSON.parse(await readFile(options.storageState, 'utf8')) : options.storageState;
+      assert.deepEqual(state, { cookies: [], origins: [] });
       const context = await create({ ...options, offline: true });
       await context.route('**/*', async route => {
         const request = route.request(), url = new URL(request.url());
@@ -34,6 +37,7 @@ async function browserFixture(t, { interactive = false, cancel = false } = {}) {
         assert.equal(url.origin, 'https://accounts.sap.com', 'fixtures never contact another origin');
         if (cancel) {
           await route.fulfill({ contentType: 'text/html', body: '<title>Sign In</title>' });
+          cancellationReached = true;
           setTimeout(() => browser.close(), 50); return;
         }
         if (interactive) return route.fulfill({ contentType: 'text/html', body: '<title>Sign In</title><script>setTimeout(()=>location.href="https://documents.support.sap.com/done",150)</script>' });
@@ -48,7 +52,7 @@ async function browserFixture(t, { interactive = false, cancel = false } = {}) {
     return browser;
   });
   t.after(async () => { assert.equal(browser.isConnected(), false); await assert.rejects(access(temporary)); });
-  return { posted, headless: () => requestedHeadless };
+  return { posted, headless: () => requestedHeadless, cancelled: () => cancellationReached };
 }
 
 test('document helper completes guarded password login and closes its real browser', { timeout: 15000 }, async t => {
@@ -66,6 +70,7 @@ test('HEADFUL without stored credentials supports manual document sign-in', { ti
 });
 
 test('closing the document login window cleans the browser and private state', { timeout: 10000 }, async t => {
-  await browserFixture(t, { cancel: true });
+  const f = await browserFixture(t, { cancel: true });
   await assert.rejects(loginForDocumentAttachments(config));
+  assert.equal(f.cancelled(), true, 'the test must reach the intended cancellation');
 });

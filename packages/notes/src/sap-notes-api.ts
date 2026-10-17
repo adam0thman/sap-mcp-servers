@@ -169,6 +169,7 @@ export class SapNotesApiClient {
   private backendRequestContextPromise: Promise<APIRequestContext> | null = null;
   private documentCookies?: Cookie[];
   private documentLogin?: Promise<void>;
+  private documentLoginRejected = false;
 
   constructor(config: ServerConfig) {
     this.config = config;
@@ -233,8 +234,8 @@ export class SapNotesApiClient {
   async fetchAttachment(attachmentUrl: string, token: string) {
     const state = await this.loadBackendStorageState(token);
     const pfx = this.config.pfxPath ? await readFile(this.config.pfxPath) : undefined;
-    const download = () => downloadAttachment(attachmentUrl, {
-      cookies: this.documentCookies ? withDocumentCookies(state?.cookies ?? [], this.documentCookies) : state?.cookies,
+    const download = (documents = this.documentCookies) => downloadAttachment(attachmentUrl, {
+      cookies: documents ? withDocumentCookies(state?.cookies ?? [], documents) : state?.cookies,
       pfx, passphrase: this.config.pfxPassphrase
     });
     const attemptedCookies = this.documentCookies;
@@ -248,6 +249,10 @@ export class SapNotesApiClient {
       }
     }
 
+    if (this.documentLoginRejected) {
+      throw new Error('The previous SAP document sign-in was rejected. Check SAP_USERNAME/SAP_PASSWORD or ' +
+        'use HEADFUL=true for interactive sign-in, then restart the server before trying again.');
+    }
     try {
       // A concurrent request may already have refreshed this host's cookies.
       if (this.documentCookies === attemptedCookies) {
@@ -260,14 +265,17 @@ export class SapNotesApiClient {
       throw new Error('Could not sign in to SAP document attachments. Check the configured SAP credentials; ' +
         'use HEADFUL=true to complete MFA or an interactive sign-in. No further login was attempted.');
     }
+    const retryCookies = this.documentCookies!;
     try {
-      const result = await download(); // One retry; its bytes validate the new session.
-      await saveDocumentCookies(this.config.ssoStorageStateFile, this.documentCookies!, state);
+      const result = await download(retryCookies); // One retry; its bytes validate the new session.
+      await saveDocumentCookies(this.config.ssoStorageStateFile, retryCookies);
       return result;
     } catch (error) {
       if (error instanceof AttachmentLoginRequiredError) {
+        this.documentLoginRejected = true;
         throw new Error('SAP still requires document sign-in after one login attempt. ' +
-          'Check access to this document in your browser.');
+          'Check SAP_USERNAME/SAP_PASSWORD and document access; use HEADFUL=true for interactive sign-in, ' +
+          'then restart the server before trying again.');
       }
       throw error; // Preserve access denials, outages and download errors.
     }

@@ -187,6 +187,14 @@ async function openAuthPage(page: Page, url: string, label: string, logger: Logg
         // validates its session after navigation.
         logger.warn(`${label} SAML redirect wait ended; checking the current page`);
       });
+      // The identity provider may silently post a SAML response back instead of
+      // showing a login form. Let either outcome settle before filling fields.
+      await Promise.any([
+        page.waitForURL(next => next.origin === serviceOrigin,
+          { timeout: IAS_BOOTSTRAP_TIMEOUT_MS, waitUntil: 'domcontentloaded' }),
+        page.locator(USERNAME_SELECTORS.map(selector => `${selector}:visible`).join(', '))
+          .first().waitFor({ state: 'visible', timeout: IAS_BOOTSTRAP_TIMEOUT_MS })
+      ]).catch(() => logger.warn(`${label} SAML sign-in did not settle; checking the current page`));
     }
   } catch (error) {
     const currentUrl = page.url();
