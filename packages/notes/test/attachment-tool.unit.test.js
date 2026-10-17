@@ -28,9 +28,12 @@ test('the actual MCP tool saves the attachment and reports its hash', async t =>
   assert.deepEqual(await readFile(result.structuredContent.path), body);
   assert.equal(result.structuredContent.filename, 'note.pdf');
   assert.equal(result.structuredContent.sha256, createHash('sha256').update(body).digest('hex'));
-  const tool = (await client.listTools()).tools.find(tool => tool.name === 'fetch_attachment');
+  const tools = (await client.listTools()).tools;
+  const tool = tools.find(tool => tool.name === 'fetch_attachment');
   assert.equal(tool.inputSchema.$schema, 'https://json-schema.org/draft/2020-12/schema');
   assert.equal(tool.outputSchema.$schema, 'https://json-schema.org/draft/2020-12/schema');
+  const manifest = JSON.parse(await readFile(new URL('../mcpb-bundle/manifest.json', import.meta.url), 'utf8'));
+  assert.deepEqual(manifest.tools.map(tool => tool.name).sort(), tools.map(tool => tool.name).sort());
 });
 
 test('an existing file is never overwritten', async t => {

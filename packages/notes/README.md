@@ -21,7 +21,8 @@ This [Model Context Protocol](https://modelcontextprotocol.io/) (MCP) server giv
 
 ## Features
 
-- **Two MCP tools** — `search` (find notes) and `fetch` (retrieve full content + metadata)
+- **Search and fetch** — find notes and retrieve full content with metadata over stdio or HTTP
+- **Attachment downloads** — `fetch_attachment` saves referenced files locally over stdio, without overwriting existing files
 - **Enriched metadata** — validity ranges, support packages and patches, references, prerequisites, side effects, correction summaries, attachments
 - **Optional correction details** — `fetch(includeCorrections=true)` retrieves detailed ABAP correction instructions (affected objects, per-correction prerequisites) via an additional OData call
 - **Two auth methods** — username/password (recommended) or SAP Passport certificate
@@ -236,6 +237,16 @@ Generic HTML and fallback JSON without note text are not returned as successful 
 Get the full content of SAP Note 2744792
 Show me note 3481252 with correction details
 ```
+
+### `fetch_attachment` (stdio)
+
+Pass an attachment URL returned by `fetch` to download that file locally. Optional `outputDir`
+selects an existing directory; otherwise the tool creates a private temporary directory. Optional
+`filename` overrides the server-provided name. Existing files are never overwritten.
+
+The result contains the saved path, filename, content type, byte count and SHA-256. Downloads are
+limited to 100 MiB, 60 seconds and five checked redirects. SAP document hosts may require SAP
+Passport authentication. See [the tool reference](docs/tools.md#fetch_attachment) for details.
 
 ---
 
