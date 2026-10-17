@@ -245,8 +245,10 @@ selects an existing directory; otherwise the tool creates a private temporary di
 `filename` overrides the server-provided name. Existing files are never overwritten.
 
 The result contains the saved path, filename, content type, byte count and SHA-256. Downloads are
-limited to 100 MiB, 60 seconds and five checked redirects. SAP document hosts may require SAP
-Passport authentication. See [the tool reference](docs/tools.md#fetch_attachment) for details.
+limited to 100 MiB, 60 seconds per download attempt and five checked redirects. If SAP Documents
+requires a separate sign-in, the tool uses your configured SAP credentials once, then retries the
+download. Later calls reuse the document cookies, including after restart. The working Notes session
+is preserved. Set `HEADFUL=true` if your account requires interactive sign-in or MFA. See [the tool reference](docs/tools.md#fetch_attachment) for details.
 
 ---
 

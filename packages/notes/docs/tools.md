@@ -254,3 +254,16 @@ For best results, chain search and fetch:
 - Fetch details for top 2-3 most relevant notes
 - Use `includeCorrections=true` only when user asks about patches/corrections/objects
 - Do NOT fetch all results
+
+### Document-host login
+
+`documents.support.sap.com` can require its own session even when Notes search works. The tool first
+tries existing cookies. On a login challenge it opens one temporary, clean browser context for the
+protected Documents entry point, using the same configured SAP password/Passport or interactive
+login. It then retries the bounded HTTPS download once. Only verified Documents cookies are merged
+into the shared SSO file; Notes cookies and origin storage are preserved.
+
+No new setting is needed for password users. Use `HEADFUL=true` for MFA/manual sign-in. Concurrent
+requests share a login attempt. HTTP 403, rate limits and server errors do not prompt another login.
+The browser closes after the attempt; temporary authentication files are removed. A failed sign-in
+returns an error instead of repeating the ordinary Notes login.

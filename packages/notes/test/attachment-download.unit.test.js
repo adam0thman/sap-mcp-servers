@@ -74,7 +74,7 @@ for (const location of ['https://example.com/file', 'http://me.sap.com/file',
   'https://me.sap.com:8443/file', 'https://user:pass@me.sap.com/file', 'https://accounts.sap.com/saml2/idp/sso']) {
   test(`does not follow an unsafe or login redirect: ${location}`, async t => {
     const calls = await fixture(t, (_req, res) => { res.writeHead(302, { Location: location }); res.end(); });
-    await assert.rejects(downloadAttachment(`${origin}/start`, {}), /Refusing|HTTPS|SESSION_EXPIRED/);
+    await assert.rejects(downloadAttachment(`${origin}/start`, {}), /Refusing|HTTPS|sign-in required/);
     assert.equal(calls.length, 1);
   });
 }
@@ -88,13 +88,13 @@ test('limits redirect loops', async t => {
 for (const status of [401, 403]) {
   test(`reports HTTP ${status} as an expired or unauthorized session`, async t => {
     await fixture(t, (_req, res) => { res.writeHead(status); res.end(); });
-    await assert.rejects(downloadAttachment(`${origin}/file`, {}), /SESSION_EXPIRED/);
+    await assert.rejects(downloadAttachment(`${origin}/file`, {}), /sign-in required|access denied/);
   });
 }
 
 test('never accepts a successful HTML login response as a file', async t => {
   await fixture(t, (_req, res) => { res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<html><script>document.cookie="fragmentAfterLogin=x";</script></html>'); });
-  await assert.rejects(downloadAttachment(`${origin}/file`, {}), /SESSION_EXPIRED/);
+  await assert.rejects(downloadAttachment(`${origin}/file`, {}), /sign-in required|access denied/);
 });
 
 test('rejects a large Content-Length before waiting for the body', { timeout: 2000 }, async t => {
@@ -138,4 +138,9 @@ test('a later download uses the new credentials rather than a retained request c
   await downloadAttachment(`${origin}/file`, { cookies: [cookie('fresh', 'documents.support.sap.com')] });
   assert.equal(calls[0].options.headers.Cookie, 'old=synthetic');
   assert.equal(calls[1].options.headers.Cookie, 'fresh=synthetic');
+});
+
+test('recognizes the documented SAP Neo login header even without familiar HTML markers', async t => {
+  await fixture(t, (_req, res) => { res.writeHead(200, { 'Content-Type': 'text/html', 'com.sap.cloud.security.login': 'login-request' }); res.end('<form>Please sign in</form>'); });
+  await assert.rejects(downloadAttachment(`${origin}/file`, {}), /sign-in required/);
 });

@@ -174,7 +174,20 @@ export function isAuthUrl(url: string): boolean {
 
 async function openAuthPage(page: Page, url: string, label: string, logger: Logger): Promise<void> {
   try {
-    await page.goto(url, { waitUntil: 'commit', timeout: 45000 });
+    const response = await page.goto(url, { waitUntil: 'commit', timeout: 45000 });
+    if (response?.headers()['com.sap.cloud.security.login'] === 'login-request') {
+      // SAP Neo first posts an HTML form through authn.hana.ondemand.com.
+      // Wait for the identity page, not that intermediate SAML form. Do not
+      // reload its URL: SAML requests can be single-use.
+      const serviceOrigin = new URL(url).origin;
+      await page.waitForURL(next => next.origin !== serviceOrigin &&
+        next.origin !== 'https://authn.hana.ondemand.com',
+      { timeout: IAS_BOOTSTRAP_TIMEOUT_MS, waitUntil: 'domcontentloaded' }).catch(() => {
+        // Existing SSO may return straight to the service; the caller still
+        // validates its session after navigation.
+        logger.warn(`${label} SAML redirect wait ended; checking the current page`);
+      });
+    }
   } catch (error) {
     const currentUrl = page.url();
     if (!currentUrl || currentUrl === 'about:blank') {
@@ -215,11 +228,18 @@ async function tryFillFirstVisible(
   logger: Logger,
   beforeFill?: () => void
 ): Promise<boolean> {
+  // One deadline for the whole phase. Sequential waits used to multiply a
+  // missing password field's 15-second timeout by every supported selector.
+  const visible = await page.waitForSelector(selectors.map(selector => `${selector}:visible`).join(', '),
+    { timeout, state: 'visible' }).catch(() => null);
+  if (!visible) return false;
+  await visible.dispose();
   for (const selector of selectors) {
-    const field = await page.waitForSelector(selector, { timeout, state: 'visible' }).catch(() => null);
-    if (field) {
+    const field = await page.$(selector);
+    if (field && await field.isVisible()) {
       beforeFill?.();
       await field.click({ clickCount: 3 });
+      beforeFill?.(); // A click must not move credential entry to another origin.
       await field.fill(value);
       logger.warn(`Filled ${label} field using selector ${selector}`);
       return true;

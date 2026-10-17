@@ -1,5 +1,6 @@
 import { readFile } from 'fs/promises';
-import { downloadAttachment } from './attachment-download.js';
+import { downloadAttachment, AttachmentLoginRequiredError } from './attachment-download.js';
+import { DOCUMENT_HOST, loginForDocumentAttachments, saveDocumentCookies, withDocumentCookies } from './document-attachment-auth.js';
 import type { ServerConfig } from './types.js';
 import { logger } from './logger.js';
 import { existsSync } from 'fs';
@@ -8,6 +9,7 @@ import {
   request,
   type APIRequestContext,
   type Browser,
+  type Cookie,
   type BrowserContextOptions,
   type Page
 } from 'playwright';
@@ -165,6 +167,8 @@ export class SapNotesApiClient {
   // backend JSON without retaining a browser process.
   private backendRequestContext: APIRequestContext | null = null;
   private backendRequestContextPromise: Promise<APIRequestContext> | null = null;
+  private documentCookies?: Cookie[];
+  private documentLogin?: Promise<void>;
 
   constructor(config: ServerConfig) {
     this.config = config;
@@ -225,15 +229,48 @@ export class SapNotesApiClient {
     }
   }
 
-  /** Download an attachment with the current SAP cookies and optional SAP Passport. */
+  /** Download directly; establish a Documents session only when that host asks for login. */
   async fetchAttachment(attachmentUrl: string, token: string) {
     const state = await this.loadBackendStorageState(token);
     const pfx = this.config.pfxPath ? await readFile(this.config.pfxPath) : undefined;
-    return downloadAttachment(attachmentUrl, {
-      cookies: state?.cookies,
-      pfx,
-      passphrase: this.config.pfxPassphrase
+    const download = () => downloadAttachment(attachmentUrl, {
+      cookies: this.documentCookies ? withDocumentCookies(state?.cookies ?? [], this.documentCookies) : state?.cookies,
+      pfx, passphrase: this.config.pfxPassphrase
     });
+    const attemptedCookies = this.documentCookies;
+    try {
+      return await download();
+    } catch (error) {
+      if (!(error instanceof AttachmentLoginRequiredError)) throw error;
+      if (new URL(error.url).hostname !== DOCUMENT_HOST) {
+        // Other attachment hosts still use the regular Notes session.
+        throw new Error(`SESSION_EXPIRED: ${error.message}`);
+      }
+    }
+
+    try {
+      // A concurrent request may already have refreshed this host's cookies.
+      if (this.documentCookies === attemptedCookies) {
+        this.documentLogin ??= loginForDocumentAttachments(this.config)
+          .then(cookies => { this.documentCookies = cookies; })
+          .finally(() => { this.documentLogin = undefined; });
+        await this.documentLogin;
+      }
+    } catch {
+      throw new Error('Could not sign in to SAP document attachments. Check the configured SAP credentials; ' +
+        'use HEADFUL=true to complete MFA or an interactive sign-in. No further login was attempted.');
+    }
+    try {
+      const result = await download(); // One retry; its bytes validate the new session.
+      await saveDocumentCookies(this.config.ssoStorageStateFile, this.documentCookies!, state);
+      return result;
+    } catch (error) {
+      if (error instanceof AttachmentLoginRequiredError) {
+        throw new Error('SAP still requires document sign-in after one login attempt. ' +
+          'Check access to this document in your browser.');
+      }
+      throw error; // Preserve access denials, outages and download errors.
+    }
   }
 
   private async invalidateBackendRequestContext(): Promise<void> {

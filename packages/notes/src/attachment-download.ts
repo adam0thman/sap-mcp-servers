@@ -12,6 +12,15 @@ const ATTACHMENT_HOSTS = new Set([
 const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 const MAX_REDIRECTS = 5;
 
+/** Login is recoverable; HTTP 403 and download failures are not login signals. */
+export class AttachmentLoginRequiredError extends Error {
+  constructor(readonly url: string) {
+    super(`Attachment sign-in required for ${new URL(url).hostname}`);
+    this.name = 'AttachmentLoginRequiredError';
+  }
+}
+
+
 export function validateAttachmentUrl(value: string): URL {
   const url = new URL(value);
   if (url.protocol !== 'https:' || url.port || url.username || url.password) {
@@ -83,11 +92,12 @@ export async function downloadAttachment(
         const location = response.headers.location;
         if (!location) throw new Error('Attachment redirect has no Location header');
         const next = new URL(location, url);
-        if (isAuthUrl(next.toString())) throw new Error('SESSION_EXPIRED: attachment redirected to SAP sign-in');
+        if (isAuthUrl(next.toString())) throw new AttachmentLoginRequiredError(url.toString());
         url = validateAttachmentUrl(next.toString());
         continue;
       }
-      if (status === 401 || status === 403) throw new Error(`SESSION_EXPIRED: attachment access rejected (HTTP ${status})`);
+      if (status === 401) throw new AttachmentLoginRequiredError(url.toString());
+      if (status === 403) throw new Error('Attachment access denied (HTTP 403). Check access to this document with your SAP user.');
       if (status !== 200) throw new Error(`Attachment request failed (HTTP ${status})`);
       if (Number(response.headers['content-length']) > maxBytes) {
         throw new Error(`Attachment exceeds the ${maxBytes}-byte limit`);
@@ -106,8 +116,9 @@ export async function downloadAttachment(
       const body = Buffer.concat(chunks, bytes);
       const contentType = response.headers['content-type'] ?? 'application/octet-stream';
       const preview = body.subarray(0, 5000).toString('utf8');
-      if (isAuthenticationBootstrapResponse(status, contentType, preview)) {
-        throw new Error('SESSION_EXPIRED: SAP returned a login page instead of the attachment');
+      if (response.headers['com.sap.cloud.security.login'] === 'login-request' ||
+        isAuthenticationBootstrapResponse(status, contentType, preview)) {
+        throw new AttachmentLoginRequiredError(url.toString());
       }
       if (contentType.toLowerCase().includes('text/html')) throw new Error('SAP returned HTML instead of an attachment');
       return { body, contentType, bytes, suggestedFilename: filenameFromDisposition(response.headers['content-disposition']) };
