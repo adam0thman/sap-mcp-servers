@@ -4,7 +4,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join, isAbsolute, resolve } from 'path';
 import { homedir } from 'os';
 import { existsSync, realpathSync } from 'fs';
-import { writeFile } from 'fs/promises';
+import { mkdtemp, rm, writeFile } from 'fs/promises';
 import { createHash } from 'crypto';
 import { tmpdir } from 'os';
 import { basename } from 'path';
@@ -25,8 +25,8 @@ import {
   NoteGetOutputMcpSchema,
   SAP_NOTE_SEARCH_DESCRIPTION,
   SAP_NOTE_GET_DESCRIPTION,
-  NoteAttachmentInputSchema,
-  NoteAttachmentOutputSchema,
+  NoteAttachmentInputMcpSchema,
+  NoteAttachmentOutputMcpSchema,
   SAP_NOTE_ATTACHMENT_DESCRIPTION
 } from './schemas/sap-notes.js';
 import { parseNoteContent } from './html-utils.js';
@@ -371,11 +371,12 @@ class SapNoteMcpServer {
       {
         title: 'Download SAP Note Attachment',
         description: SAP_NOTE_ATTACHMENT_DESCRIPTION,
-        inputSchema: NoteAttachmentInputSchema,
-        outputSchema: NoteAttachmentOutputSchema
+        inputSchema: NoteAttachmentInputMcpSchema,
+        outputSchema: NoteAttachmentOutputMcpSchema,
+        annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: true }
       },
       async ({ url, outputDir, filename }) => {
-        logger.info(`📎 [fetch_attachment] Downloading ${url}`);
+        logger.info('Downloading SAP Note attachment');
 
         try {
           const { body, contentType, bytes, suggestedFilename } = await this.withAuthRetry(token =>
@@ -388,15 +389,23 @@ class SapNoteMcpServer {
           const fromUrl = decodeURIComponent(new URL(url).pathname.split('/').pop() || 'attachment');
           const chosen = filename?.trim() || suggestedFilename?.trim() || fromUrl;
           // Never let a supplied name escape the target directory.
-          const safeName = basename(chosen).replace(/[/\\]/g, '') || 'attachment';
+          const safeName = basename(chosen.replace(/\\/g, '/')).replace(/[<>:"|?*\x00-\x1f]/g, '_');
+          if (!safeName || safeName === '.' || safeName === '..') throw new Error('Invalid attachment filename');
 
-          const dir = outputDir?.trim() ? resolve(outputDir.trim()) : tmpdir();
+          const privateTemp = !outputDir?.trim();
+          const dir = privateTemp ? await mkdtemp(join(tmpdir(), 'sap-note-attachment-')) : resolve(outputDir!.trim());
           if (!existsSync(dir)) {
             throw new Error(`Output directory does not exist: ${dir}`);
           }
 
           const target = join(dir, safeName);
-          await writeFile(target, body);
+          try {
+            // Exclusive creation prevents overwrites, including existing symlinks.
+            await writeFile(target, body, { flag: 'wx', mode: 0o600 });
+          } catch (error) {
+            if (privateTemp) await rm(dir, { recursive: true, force: true });
+            throw error;
+          }
 
           const sha256 = createHash('sha256').update(body).digest('hex');
           const output = { path: target, filename: safeName, contentType, bytes, sha256 };

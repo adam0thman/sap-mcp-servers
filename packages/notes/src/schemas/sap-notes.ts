@@ -351,14 +351,14 @@ export const NoteAttachmentInputSchema = {
     .string()
     .optional()
     .describe(
-      `Directory to write the file into. Defaults to the OS temp directory. The directory must already exist.`
+      `Local directory to write the file into. It must already exist. By default, creates a private directory under the OS temp directory. Existing files are never overwritten.`
     ),
 
   filename: z
     .string()
     .optional()
     .describe(
-      `Filename to save as. Defaults to the attachment's filename from the note, or a name derived from the URL. Path separators are stripped.`
+      `Filename to save as. Defaults to the server's Content-Disposition filename, then the URL basename. Directory components are removed. Existing files are never overwritten.`
     )
 };
 
@@ -377,11 +377,14 @@ export const NoteAttachmentOutputSchema = {
   sha256: z.string().describe('SHA-256 of the saved bytes, for integrity checking and de-duplication.')
 };
 
-export const SAP_NOTE_ATTACHMENT_DESCRIPTION = `Download a file attached to an SAP Note and save it to disk.
+export const NoteAttachmentInputMcpSchema = mcpObjectSchema(NoteAttachmentInputSchema);
+export const NoteAttachmentOutputMcpSchema = mcpObjectSchema(NoteAttachmentOutputSchema);
+
+export const SAP_NOTE_ATTACHMENT_DESCRIPTION = `Download a file attached to an SAP Note and save it to the local filesystem (stdio only).
 
 USE AFTER fetch() returns an "attachments" array — pass one of those URLs verbatim. Attachments are the screenshots, PDFs, spreadsheets and archives referenced by a Note's text; the Note body often points at them with placeholders such as [image.png].
 
-Returns the saved path, content type, byte size and SHA-256. Only SAP document hosts are accepted.
+Returns the saved path, content type, byte size and SHA-256. Only SAP document hosts are accepted, including redirects. Existing files are never overwritten. Downloads are limited to 100 MiB and 60 seconds.
 
 NOTE: an unauthenticated or expired session returns HTTP 200 with a small HTML login stub rather than an error. This tool detects that and fails instead of silently saving the stub — so a successful result means real file bytes.`;
 

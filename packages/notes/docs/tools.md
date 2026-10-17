@@ -177,8 +177,8 @@ Downloads a file attached to an SAP Note and saves it to disk.
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `url` | string (URL) | yes | Attachment URL taken **verbatim** from the `attachments` array of `fetch()`. These URLs are opaque — do not construct them. |
-| `outputDir` | string | no | Directory to write into. Defaults to the OS temp directory; must already exist. |
-| `filename` | string | no | Name to save as. Defaults to the attachment's filename. Path separators are stripped. |
+| `outputDir` | string | no | Existing local directory. Defaults to a new private directory under OS temp. |
+| `filename` | string | no | Name to save as. Defaults to Content-Disposition, then the URL basename. Directory components are removed. |
 
 ### Output
 
@@ -194,8 +194,13 @@ Downloads a file attached to an SAP Note and saves it to disk.
 
 Attachments are served from SAP's support document hosts — observed:
 `documents.support.sap.com` and `userapps.support.sap.com`. Both are needed; several
-notes use one and several use the other. Downloads are restricted to an allowlist of
-SAP hosts so the tool cannot be used as a general-purpose fetcher.
+notes use one and several use the other. Downloads and every redirect are restricted to an allowlist
+of SAP hosts. TLS certificates are verified. The tool is available over **stdio only**: the returned
+path belongs to the machine running the MCP server.
+
+Existing files and symlinks are never overwritten. Concurrent downloads to the same filename allow
+only one writer. Downloads stop after 60 seconds, five redirects, or 100 MiB of file data (including
+after HTTP decompression). The size is checked while reading, including chunked responses.
 
 **Authentication differs from the JSON backend.** The me.sap.com storage state alone is
 not sufficient for the document hosts. Where `PFX_PATH` is configured the client
@@ -218,9 +223,15 @@ fetch_attachment(url="https://userapps.support.sap.com/...", outputDir="/tmp")
       bytes: 878422, sha256: "6f64e07c7903..." }
 ```
 
-Verified live against 10 notes carrying attachments, yielding `image/png`,
-`application/pdf`, `application/vnd.ms-excel`, `application/x-zip-compressed` and
-`application/x-tika-msoffice` across both hosts.
+To verify your setup against real notes with attachments, run from `packages/notes`:
+
+```sh
+node scripts/test-attachments.mjs 2187425
+```
+
+The script uses the actual MCP tools and normal server configuration. It fails when a selected note
+has no attachment or a download fails, and verifies the saved bytes and SHA-256 before cleaning up.
+URL, redirect, filename and size-limit regressions run offline in the unit suite.
 
 ## Recommended Workflow
 
